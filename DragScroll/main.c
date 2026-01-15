@@ -1,10 +1,17 @@
 #include <ApplicationServices/ApplicationServices.h>
+#include <math.h>
 
-#define DEFAULT_BUTTON 5
+#define DEFAULT_BUTTON 3
 #define DEFAULT_KEYS kCGEventFlagMaskShift
 #define DEFAULT_SPEED 3
 #define MAX_KEY_COUNT 5
 #define EQ(x, y) (CFStringCompare(x, y, kCFCompareCaseInsensitive) == kCFCompareEqualTo)
+
+// Autoscroll tuning (feel free to tweak)
+#define TIMER_HZ 60.0
+#define DEADZONE_PX 6.0
+#define MAX_SCROLL_PER_TICK 80.0
+#define GAIN 0.20   // converts pixels-from-anchor into scroll-per-tick; higher = faster
 
 static const CFStringRef AX_NOTIFICATION = CFSTR("com.apple.accessibility.api");
 static bool TRUSTED;
@@ -13,51 +20,148 @@ static int BUTTON;
 static int KEYS;
 static int SPEED;
 
-static bool BUTTON_ENABLED;
-static bool KEY_ENABLED;
-static CGPoint POINT;
+static bool BUTTON_ENABLED; // toggled by middle click
+static bool KEY_ENABLED;    // held modifier keys
+static CGPoint ANCHOR_POINT;
 
-static void maybeSetPointAndWarpMouse(bool thisEnabled, bool otherEnabled, CGEventRef event)
+static CFRunLoopTimerRef AUTOSCROLL_TIMER = NULL;
+
+static CGPoint currentMouseLocation(void)
 {
-    if (!otherEnabled) {
-        POINT = CGEventGetLocation(event);
-        CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStateCombinedSessionState);
-        if (thisEnabled) {
-            CGEventSourceSetLocalEventsSuppressionInterval(source, 10.0);
-            CGWarpMouseCursorPosition(POINT);
+    CGEventRef e = CGEventCreate(NULL);
+    CGPoint p = CGEventGetLocation(e);
+    CFRelease(e);
+    return p;
+}
+
+static double clampd(double v, double lo, double hi)
+{
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+static void stopAutoscrollTimer(void)
+{
+    if (AUTOSCROLL_TIMER) {
+        CFRunLoopTimerInvalidate(AUTOSCROLL_TIMER);
+        CFRelease(AUTOSCROLL_TIMER);
+        AUTOSCROLL_TIMER = NULL;
+    }
+}
+
+static void autoscrollTick(CFRunLoopTimerRef timer, void *info)
+{
+    (void)timer;
+    (void)info;
+
+    bool active = (BUTTON_ENABLED || KEY_ENABLED);
+    if (!active) {
+        stopAutoscrollTimer();
+        return;
+    }
+
+    CGPoint cur = currentMouseLocation();
+    double dx = cur.x - ANCHOR_POINT.x;
+    double dy = cur.y - ANCHOR_POINT.y;
+
+    // Deadzone so tiny hand jitter doesn't scroll
+    if (fabs(dx) < DEADZONE_PX) dx = 0.0;
+    if (fabs(dy) < DEADZONE_PX) dy = 0.0;
+
+    // Convert distance-from-anchor into per-tick scroll deltas (velocity-style)
+    // Negative because screen coordinates increase downward.
+    double scrollY = -(double)SPEED * GAIN * dy;
+    double scrollX = -(double)SPEED * GAIN * dx;
+
+    scrollY = clampd(scrollY, -MAX_SCROLL_PER_TICK, MAX_SCROLL_PER_TICK);
+    scrollX = clampd(scrollX, -MAX_SCROLL_PER_TICK, MAX_SCROLL_PER_TICK);
+
+    // If we're in the deadzone, do nothing
+    if (scrollX == 0.0 && scrollY == 0.0) return;
+
+    CGEventRef scrollWheelEvent = CGEventCreateScrollWheelEvent(
+        NULL, kCGScrollEventUnitPixel, 2, (int)scrollY, (int)scrollX
+    );
+
+    // If key-mode is active, strip the modifier keys from the synthetic scroll event
+    // so apps don't interpret Shift/Option/etc. as part of the scroll gesture.
+    if (KEY_ENABLED) {
+        CGEventFlags f = CGEventGetFlags(scrollWheelEvent);
+        CGEventSetFlags(scrollWheelEvent, f & ~((CGEventFlags)KEYS));
+    }
+
+    CGEventPost(kCGHIDEventTap, scrollWheelEvent);
+    CFRelease(scrollWheelEvent);
+}
+
+static void startAutoscrollTimerIfNeeded(void)
+{
+    if (AUTOSCROLL_TIMER) return;
+
+    CFRunLoopTimerContext ctx = {0};
+    double interval = 1.0 / TIMER_HZ;
+
+    AUTOSCROLL_TIMER = CFRunLoopTimerCreate(
+        kCFAllocatorDefault,
+        CFAbsoluteTimeGetCurrent() + interval,
+        interval,
+        0, 0,
+        autoscrollTick,
+        &ctx
+    );
+
+    CFRunLoopAddTimer(CFRunLoopGetCurrent(), AUTOSCROLL_TIMER, kCFRunLoopDefaultMode);
+}
+
+static void updateAutoscrollActiveState(CGEventRef eventForAnchor)
+{
+    bool active = (BUTTON_ENABLED || KEY_ENABLED);
+
+    if (active) {
+        // Capture anchor at the moment we become active.
+        if (eventForAnchor) {
+            ANCHOR_POINT = CGEventGetLocation(eventForAnchor);
         } else {
-            CGEventSourceSetLocalEventsSuppressionInterval(source, 0.0);
-            CGWarpMouseCursorPosition(POINT);
-            CGEventSourceSetLocalEventsSuppressionInterval(source, 0.25);
+            ANCHOR_POINT = currentMouseLocation();
         }
-        CFRelease(source);
+        startAutoscrollTimerIfNeeded();
+    } else {
+        stopAutoscrollTimer();
     }
 }
 
 static CGEventRef tapCallback(CGEventTapProxy proxy,
                               CGEventType type, CGEventRef event, void *userInfo)
 {
-    if (type == kCGEventMouseMoved && (BUTTON_ENABLED || KEY_ENABLED)) {
-        int deltaX = (int)CGEventGetIntegerValueField(event, kCGMouseEventDeltaX);
-        int deltaY = (int)CGEventGetIntegerValueField(event, kCGMouseEventDeltaY);
-        CGEventRef scrollWheelEvent = CGEventCreateScrollWheelEvent(
-            NULL, kCGScrollEventUnitPixel, 2, -SPEED * deltaY, -SPEED * deltaX
-        );
-        if (KEY_ENABLED)
-            CGEventSetFlags(scrollWheelEvent, CGEventGetFlags(event) & ~KEYS);
-        CGEventTapPostEvent(proxy, scrollWheelEvent);
-        CFRelease(scrollWheelEvent);
-        CGWarpMouseCursorPosition(POINT);
-        event = NULL;
-    } else if (type == kCGEventOtherMouseDown
-               && CGEventGetFlags(event) == 0
-               && CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber) == BUTTON) {
+    (void)proxy;
+    (void)userInfo;
+
+    // Middle click toggles autoscroll mode
+    if (type == kCGEventOtherMouseDown
+        && CGEventGetFlags(event) == 0
+        && CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber) == BUTTON) {
+
         BUTTON_ENABLED = !BUTTON_ENABLED;
-        maybeSetPointAndWarpMouse(BUTTON_ENABLED, KEY_ENABLED, event);
-        event = NULL;
-    } else if (type == kCGEventFlagsChanged) {
-        KEY_ENABLED = (CGEventGetFlags(event) & KEYS) == KEYS;
-        maybeSetPointAndWarpMouse(KEY_ENABLED, BUTTON_ENABLED, event);
+        updateAutoscrollActiveState(event);
+
+        // swallow the click so apps don't receive it
+        return NULL;
+    }
+
+    // Modifier keys enable/disable key-mode scrolling
+    if (type == kCGEventFlagsChanged) {
+        bool was = KEY_ENABLED;
+        KEY_ENABLED = ((CGEventGetFlags(event) & (CGEventFlags)KEYS) == (CGEventFlags)KEYS);
+
+        // Only reset anchor when transitioning from inactive -> active
+        if (!was && KEY_ENABLED) {
+            updateAutoscrollActiveState(event);
+        } else if (was && !KEY_ENABLED && !BUTTON_ENABLED) {
+            updateAutoscrollActiveState(NULL);
+        }
+
+        return event;
     }
 
     return event;
@@ -78,6 +182,8 @@ static void notificationCallback(CFNotificationCenterRef center, void *observer,
                                  CFNotificationName name, const void *object,
                                  CFDictionaryRef userInfo)
 {
+    (void)center; (void)observer; (void)name; (void)object; (void)userInfo;
+
     CFRunLoopRef runLoop = CFRunLoopGetCurrent();
     CFRunLoopPerformBlock(
         runLoop, kCFRunLoopDefaultMode, ^{
@@ -174,13 +280,15 @@ int main(void)
     if (!getIntPreference(CFSTR("speed"), &SPEED))
         SPEED = DEFAULT_SPEED;
 
-    CGEventMask events = CGEventMaskBit(kCGEventMouseMoved);
+    // Event tap: we no longer need MouseMoved for scrolling (timer drives it).
+    CGEventMask events = 0;
     if (BUTTON != 0) {
         events |= CGEventMaskBit(kCGEventOtherMouseDown);
-        BUTTON--;
+        BUTTON--; // convert preference to 0-based button number
     }
     if (KEYS != 0)
         events |= CGEventMaskBit(kCGEventFlagsChanged);
+
     CFMachPortRef tap = CGEventTapCreate(
         kCGSessionEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault,
         events, tapCallback, NULL
@@ -193,7 +301,7 @@ int main(void)
     CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopDefaultMode);
     CFRelease(tap);
     CFRelease(source);
-    CFRunLoopRun();
 
+    CFRunLoopRun();
     return EXIT_SUCCESS;
 }
