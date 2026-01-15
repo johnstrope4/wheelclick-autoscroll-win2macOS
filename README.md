@@ -1,173 +1,193 @@
-# DragScroll
+# Wheelclick AutoScroll (Windows->MacOS)
 
-[![Downloads](https://img.shields.io/github/downloads/emreyolcu/drag-scroll/total.svg)](https://github.com/emreyolcu/drag-scroll/releases)
+*Windows-style middle-click autoscroll for macOS*
 
-This small utility provides a drag-to-scroll mechanism for macOS.
-It runs in the background and does not interfere until
-either a mouse button is pressed (button 5 by default)
-or some modifier keys are held down (the Shift key by default),
-both of which activate drag scrolling mode.
-In this mode, the mouse cursor is locked in place
-and mouse movement is interpreted as scrolling.
-Pressing the mouse button again or releasing the modifier keys
-deactivates drag scrolling mode.
+---
 
-This application is especially useful with a trackball:
-you can activate drag scrolling and roll the ball
-to quickly scroll through a large website or a document.
-It also works with the trackpad, for instance allowing you
-to drag scroll with a single finger
-while holding down the modifier keys.
+## Overview
 
-> [!NOTE]
-> The two means of activation operate independently of each other:
-> if you first press the mouse button to activate
-> and then press and release the modifier keys,
-> drag scrolling mode stays active until you press the mouse button again.
+**AutoScroll** is a small background utility for macOS that implements a **toggleable, velocity-based autoscroll mechanism**, similar to the middle-click autoscroll behavior found on Windows.
 
-### Supported versions
+Unlike drag-to-scroll tools, AutoScroll uses a **mode-based** interaction:
 
-As of May 2024, this application works on macOS versions 10.9–14.0.
+- Click the scroll wheel (or configured button) once to enable autoscroll
+- Move the mouse slightly to set a scrolling speed and direction
+- Hold the mouse still to continue scrolling at a constant rate
+- Click again to stop
 
-### Installation
+Scrolling speed is proportional to the distance of the mouse cursor from the activation point, allowing long, comfortable scrolling without continuous dragging.
 
-You may download the binary [here](https://github.com/emreyolcu/drag-scroll/releases/download/v1.3.1/DragScroll.zip).
-DragScroll requires access to accessibility features.
-Upon startup, if it does not have access, it will prompt you and wait.
-You do not need to restart the application
-after you grant it access to accessibility features.
+---
 
-> [!CAUTION]
-> You should not revoke accessibility access
-> for DragScroll while it is running.
-> Otherwise, your mouse might become unresponsive, requiring a reboot to fix.
+## How it works
 
-If you want the application to run automatically when you log in,
-do the following:
+1. Middle-click (or configured button) toggles autoscroll mode
+2. The cursor position at activation becomes an **anchor point**
+3. Cursor distance from the anchor controls scroll **velocity**
+4. Scrolling continues even when the mouse is stationary
+5. A second click (or releasing modifiers) exits autoscroll mode
 
-1. On macOS 13.0 and later, go to `System Settings > General > Login Items`;
-   otherwise, go to `System Preferences > Users & Groups > Login Items`.
-2. Add `DragScroll` to the list.
+This interaction closely matches Windows’ native autoscroll behavior and is especially useful for:
 
-If you want to quit the application, either run `killall DragScroll`
-or do the following:
+- Reading long documents
+- Browsing large web pages
+- Trackball and mouse users who prefer click-to-scroll over gesture-based scrolling
 
-1. Launch `Activity Monitor`.
-2. Search for `DragScroll` and select it.
-3. Click the stop button in the upper-left corner and choose Quit.
+---
 
-### Configuration
+## Supported versions
 
-- **Mouse button**:
-  The default mouse button for toggling drag scrolling is button 5.
-  If you want to use a different mouse button, run the following command,
-  replacing `BUTTON` with a button number between 3 and 32.
-  (Button numbers are one-based,
-  so 1 and 2 represent left and right mouse buttons.
-  You cannot use those in DragScroll.)
+Tested on macOS **10.9 through 14.x**.
 
-  ```
-  defaults write com.emreyolcu.DragScroll button -int BUTTON
-  ```
+Accessibility and Input Monitoring permissions are required.
 
-  If you do not want to use mouse buttons with DragScroll,
-  set `button` to 0.
+---
 
-- **Modifier keys**:
-  The default modifier key for activating drag scrolling is the Shift key.
-  If you want to use a different set of modifiers, run the following command,
-  replacing `[KEYS...]` by a space-separated set of modifier keys
-  chosen from among `capslock`, `shift`, `control`, `option`, `command`.
-  (Unlike the other modifiers, Caps Lock works as a toggle.)
+## Installation
 
-  ```
-  defaults write com.emreyolcu.DragScroll keys -array [KEYS...]
-  ```
+Download the latest release from the **Releases** page and drag `AutoScroll.app` to `/Applications`.
 
-  For instance, if you want to activate drag scrolling
-  by holding down Control and Command together, run:
+On first launch, macOS will prompt for required permissions:
 
-  ```
-  defaults write com.emreyolcu.DragScroll keys -array control command
-  ```
+- **Accessibility**
+- **Input Monitoring**
 
-  If you do not want to use modifier keys with DragScroll,
-  set `keys` to an empty array:
+The application will wait until permissions are granted.
 
-  ```
-  defaults write com.emreyolcu.DragScroll keys -array
-  ```
+> **Important**  
+> Do not revoke Accessibility or Input Monitoring permissions while AutoScroll is running.
 
-- **Scrolling speed:**
-  If you want to change scrolling speed, run the following command,
-  replacing `SPEED` with a small number (default is 3).
-  This number may even be negative, which inverts scrolling direction.
+### Run at login (optional)
 
-  ```
-  defaults write com.emreyolcu.DragScroll speed -int SPEED
-  ```
+- macOS 13.0 and later:  
+  `System Settings → General → Login Items`
+- Earlier versions:  
+  `System Preferences → Users & Groups → Login Items`
 
-> [!WARNING]
-> If you set a preference to an unexpected value (e.g., of the wrong type),
-> then its default value is used as a fallback.
+Add `AutoScroll.app`.
 
-You should restart the application for these settings to take effect.
+---
 
-### Uninstallation
+## Configuration
 
-To uninstall DragScroll, quit the application, move it to trash,
-and remove it from the lists for accessibility access and login items.
-You can remove any stored preferences by running the following:
+AutoScroll uses macOS defaults for configuration. Restart the application after changing any setting.
+
+### Mouse button
+
+The default toggle button is the **middle mouse button**.
+
+To change it:
 
 ```
-defaults delete com.emreyolcu.DragScroll
+defaults write com.yourbundleid.AutoScroll button -int BUTTON
 ```
 
-### Potential problems
+- Button numbers are one-based:
+  - 1 = left click
+  - 2 = right click
+  - 3 = middle click (default)
+  - 4–32 = additional mouse buttons
 
-Recent versions of macOS have made it difficult to run unsigned binaries.
+Set `button` to `0` to disable mouse-button activation.
 
-If you experience issues launching the application, try the following:
+---
 
-- Remove the quarantine attribute by running the command
-  `xattr -dr com.apple.quarantine /path/to/DragScroll.app`,
-  where the path points to the application bundle.
-- Disable Gatekeeper by running the command
-  `spctl --add /path/to/DragScroll.app`,
-  where the path points to the application bundle.
+### Modifier keys (optional)
 
-If on startup the application asks for accessibility permissions
-even though you have previously granted it access, try the following:
+Autoscroll may also be activated by holding modifier keys.
 
-1. On macOS 13.0 and later, go to `System Settings > Privacy & Security > Accessibility`;
-   otherwise, go to `System Preferences > Security & Privacy > Privacy > Accessibility`.
-2. Remove `DragScroll` from the list and add it again.
+```
+defaults write com.yourbundleid.AutoScroll keys -array [KEYS...]
+```
 
-### History
+Supported keys:
 
-#### v1.3.1 (2024-06-05)
+- `capslock`
+- `shift`
+- `control`
+- `option`
+- `command`
 
-- **Fix:** Release event tap and run loop source after adding source.
+Example:
 
-#### v1.3.0 (2024-06-02)
+```
+defaults write com.yourbundleid.AutoScroll keys -array option
+```
 
-- Change "scale" to "speed".
-- Remove accessibility observer once granted access.
+To disable modifier keys:
 
-#### v1.2.0 (2024-05-31)
+```
+defaults write com.yourbundleid.AutoScroll keys -array
+```
 
-- Observe changes in accessibility access continuously.
+---
 
-#### v1.1.0 (2024-05-29)
+### Scroll speed
 
-- Allow using modifier keys in addition to mouse buttons.
+Controls overall scroll sensitivity.
 
-#### v1.0.0 (2024-05-27)
+```
+defaults write com.yourbundleid.AutoScroll speed -int SPEED
+```
 
-- Handle errors and check for accessibility access.
-- Allow configuring the toggle button and scrolling speed.
-- Rename project from "PixelScroll" to "DragScroll".
+- Default: `3`
+- Higher values scroll faster
+- Negative values invert scroll direction
 
-#### v0.1.0 (2018-05-26)
+---
 
-- Initial release.
+## Uninstallation
+
+1. Quit AutoScroll
+2. Move the application to Trash
+3. Remove it from:
+   - Accessibility
+   - Input Monitoring
+   - Login Items (if added)
+
+To remove preferences:
+
+```
+defaults delete com.yourbundleid.AutoScroll
+```
+
+---
+
+## Potential issues
+
+### App won’t launch
+
+Unsigned binaries may be blocked by Gatekeeper.
+
+```
+xattr -dr com.apple.quarantine /Applications/AutoScroll.app
+codesign --force --deep --sign - /Applications/AutoScroll.app
+```
+
+### App does not respond to mouse input
+
+Ensure **both** permissions are enabled:
+
+- Accessibility
+- Input Monitoring
+
+If issues persist, remove and re-add AutoScroll in System Settings.
+
+---
+
+## Origin and credits
+
+AutoScroll is derived from **DragScroll** by Emre Yolcu:
+
+https://github.com/emreyolcu/drag-scroll
+
+This project replaces DragScroll’s drag-based scrolling model with a **stateful, velocity-based autoscroll interaction** inspired by Windows’ native behavior.
+
+The original license terms are preserved.
+
+---
+
+## License
+
+Same license as the original DragScroll project. See `LICENSE` for details.
+
